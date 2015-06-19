@@ -1,0 +1,126 @@
+Testing the power of predictive modeling on stuctured measures of clinical depression
+========================================================
+author: ACRL
+date: `r date() `
+
+First Slide
+========================================================
+
+For more details on authoring R presentations click the
+**Help** button on the toolbar.
+
+- Bullet 1
+- Bullet 2
+- Bullet 3
+
+Slide 1: Building the simulated dataset.
+========================================================
+
+ 
+No dataset with real data from patients was available even on Center for Disease control.
+The Questionnaire used was CES-D (Radloff, 1977).
+The random binomial function was used to build the simulated dataset. 
+Negative values were entered for the positive attributes (questions 4, 8, 12, and 16) of the questionnaire. 
+
+
+```{r CESDataset, cache=TRUE}
+setwd("C:/Users/Anne-Catherine/Documents/Data Products/DP-Project")
+library(dplyr)
+set.seed(100)
+Questions=c("bother", "poor_appetite", "get_off_blue", "good_as_others", "pb_focusing", "depressed",
+            "effortful", "hopeful", "failure", "fearful", "restless_sleep", "happy", "less_talk", "lonely",
+            "unfriendly_people", "enjoy_life", "crying", "sad", "disliked", "no_get_going")
+
+a=lapply(Questions, function(x) x=rbinom(1000, size= 3, prob=.45))
+df_CES_D=data.frame(a)
+colnames(df_CES_D)= c(Questions)
+df_CES_D[c(4, 8, 12, 16)]=df_CES_D[c(4, 8, 12, 16)]-3
+```
+Creating new variable "Score_D": "Score_D" results from the sum of the 20 questions. 
+If Score_D is greater than 16 total points, the individual was categorized as "depressed" (1).Less than 16, "non-depressed" (0). A new variable "Status" was created.   
+```{r Score_Dep, cache=TRUE}
+sumB=apply(df_CES_D, 1, sum)
+df_CES_D=mutate(df_CES_D, Score_D=sumB)
+Status=ifelse(df_CES_D$Score_D > 16, 1, 0)
+df_CES_D=mutate(df_CES_D, Status=Status)
+ndep=sum(df_CES_D$Status)
+```
+Testing the difference in score between the two groups "depressed" and "non-depressed" in "Status" variable using t-test.
+```{r Diff_Status, cache=TRUE}
+Mean_Status=t.test(Score_D~Status, data=df_CES_D)$estimate[2] - t.test(Score_D~Status, data=df_CES_D)$estimate[1]
+P_value_Status=t.test(Score_D~Status, data=df_CES_D)$p.value
+```
+
+The mean difference between the two groups was `r Mean_Status` with a p-value `r P_value`. The deppressed group had a significantly higher score ` r t.test(Score_D~Status, data=df_CES_D)$estimate[2]` than the non-depressed group `t.test(Score_D~Status, data=df_CES_D)$estimate[1]`. 
+
+Slide 2: Predicting depression
+========================================================
+
+###Partition of "df_CES_D" to create a validation set
+```{r Partition, cache=TRUE}
+library(caret); library(dplyr)
+set.seed(101)
+df_CES_D=select_(df_CES_D, -21)
+inTrain <- createDataPartition(y=df_CES_D$Status,
+                               p=0.66, list=FALSE)
+CES_training_set <- df_CES_D[inTrain,]
+CES_validation_set <- df_CES_D[-inTrain,]
+```
+
+### Test for colinearity between predictors
+```{r colinearity, cache=TRUE}
+M = abs(cor(CES_training_set[,1:20]))
+diag(M) = 0
+HighCorr=which(M > 0.2, arr.ind=T)
+```
+Because the values of the predictors were distributed at random, no correlation was found.
+
+###Model fitting: decision Tree using "lm" with 10-fold cross-validation: A simple linear model was performed.
+```{r tree, cache=TRUE}
+set.seed(3)
+modelFitLM = train(CES_training_set$Status ~ ., method="lm", data=CES_training_set, trControl=trainControl(method="cv", number=10))
+modelFitLM$finalModel
+modelFitLM$varImp
+modelFitLM$results
+modelFitLM$coefficients
+summary(modelFitLM)
+
+set.seed(5)
+modelFitGLM = train(CES_training_set$Status ~ ., method="glm", data=CES_training_set, trControl=trainControl(method="cv", number=10))
+modelFitGLM$finalModel
+modelFitGLM$varImp
+modelFitGLM$results
+summary(modelFitGLM)
+
+set.seed(4)
+modelFitRF = train(CES_training_set$Status ~ ., method="rf", data=CES_training_set, trControl=trainControl(method="cv", number=10))
+modelFitRF$finalModel
+modelFitRF$varImp
+modelFitRF$results
+summary(modelFitRF)
+
+set.seed(6)
+modelFitGLMB = train(CES_training_set$Status ~ ., method="glmboost", data=CES_training_set, trControl=trainControl(method="cv", number=10))
+modelFitGLMB$finalModel
+modelFitGLMB$varImp
+modelFitGLMB$results
+summary(modelFitGLMB)
+```
+Other training methods were tested without improvement in R-squared, `r modelFitLM$results[, 3]`.
+
+###Predictions on validation set using "lm"
+```{r prediction, cache=TRUE}
+pred = predict(modelFitLM,CES_validation_set); CES_validation_set$predRight = round(pred)==CES_validation_set$Status
+Confusion_Matrix=table(round(pred),CES_validation_set$Status)
+valAccuracy=round(sum(diag(Confusion_Matrix))/(nrow(CES_validation_set)),2)
+```
+Accuracy was high, `r valAccuracy`.
+
+###Select 5 top predictors.
+```{r fivetop, cache=TRUE}
+summ=summary(modelFitLM)
+coef=as.data.frame(summ$coefficients[, c(1, 4)])
+row.names(coef)
+coef=coef[with(coef, order(desc(Estimate))),]
+top=coef[1:5,]
+```
